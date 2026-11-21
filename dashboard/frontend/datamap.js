@@ -1,7 +1,7 @@
 /* Data map: where the client's personal data lives, which services use it, for which purposes, and
    who receives it, built by the service from the shop schema, NigraniAI's database logs, the consent
    policy, the retention rules and the declarations kept here. Tabs: an interactive flow map, the
-   data inventory, the record of processing (CSV / print), the gaps, and the declarations editor.
+   data inventory, the gaps, and the declarations editor.
    Only names and counts reach the browser, never data values. While Live is on (the switch at the top)
    the map updates every 4 s from the log rows that arrived since the last update: links that just
    carried traffic pulse, a live feed lists the accesses, and new or closed gaps are announced.
@@ -254,7 +254,6 @@ const DataMap = (() => {
           <p class="muted">Built from the shop’s database schema, its database logs, the consent policy, the retention rules and your declarations.</p>
           <div class="dm-hacts">
             ${can("datamap:Scan") ? `<button class="btn primary${S.scanning ? " loading" : ""}" data-act="scan" ${S.scanning ? "disabled" : ""}>${S.scanning ? "Scanning…" : "Rescan now"}</button>` : ""}
-            <button class="btn ghost" data-act="tab" data-tab="ropa">Record of processing</button>
             <button class="btn ghost ai-ask" data-ask-ai="datamap">✦ Ask AI</button>
           </div>
         </div>
@@ -276,7 +275,7 @@ const DataMap = (() => {
   }
   function tabs() {
     const n = L()?.gaps.length || 0;
-    const list = [["map", "Map"], ["inventory", "Inventory"], ["ropa", "Record of processing"], ["gaps", `Gaps${n ? ` <i class="dm-count">${n}</i>` : ""}`], ["detect", "Detection"], ["decl", "Declarations"]];
+    const list = [["map", "Map"], ["inventory", "Inventory"], ["gaps", `Gaps${n ? ` <i class="dm-count">${n}</i>` : ""}`], ["detect", "Detection"], ["decl", "Declarations"]];
     return `<div class="cp-tabs dm-tabs" role="tablist">${list.map(([k, l]) => `<button role="tab" class="${S.tab === k ? "on" : ""}" aria-selected="${S.tab === k}" data-tab="${k}" data-act="tab">${l}</button>`).join("")}</div>`;
   }
   function mapTab() {
@@ -325,28 +324,6 @@ const DataMap = (() => {
     return `<div class="dm-invtools"><div class="dm-seg" role="group">${[["personal", "Personal data"], ["all", "All tables"], ["np", "Not personal"]].map(([k, l]) => `<button class="${S.invFilter === k ? "on" : ""}" data-inv="${k}">${l}</button>`).join("")}</div>
       <input type="search" id="dmInvQ" placeholder="Find a table or column…" value="${esc(S.invQ)}" aria-label="Find a table or column"></div>
       <div class="dm-invgrid">${list.map(card).join("") || `<div class="panel cp-empty">No tables match.</div>`}</div>`;
-  }
-  function ropaTab() {
-    const d = L();
-    const cell = (xs, f = esc) => (xs && xs.length ? xs.map(f).join(", ") : `<span class="muted">–</span>`);
-    return `<section class="panel dm-ropa-head"><div><h3>Record of processing activities</h3><p class="muted">One entry per purpose, generated from the live data map: what personal data is processed, why, on what basis, where it's kept, who uses and receives it, how long it's kept, and how it's protected. ${esc(ME?.client?.name || "")} · data fiduciary · ${esc(dt(d.at))}.</p></div>
-        <div class="dm-hacts"><button class="btn ghost" data-act="csv">Export CSV</button><button class="btn primary" data-act="print">Print / save as PDF</button></div></section>
-      <div class="dm-ropa">${d.ropa.map((r) => {
-        const extra = (r.found_categories || []).filter((c) => !(r.declared_categories || []).includes(c) && !["customer content", "linked to a person", "device"].includes(c));
-        return `<article class="panel dm-ropa-card${r.purpose ? "" : " orphan"}" style="--c:${r.purpose ? purposeColor(r.purpose) : "var(--err)"}">
-          <header><h3>${esc(r.name)}</h3>${r.purpose ? `<span class="dm-basis">${esc(BASIS[r.legal_basis] || r.legal_basis || "–")}${r.consent_type === "opt_in" ? " · opt-in" : ""}</span>` : `<span class="dm-sev s-high">Needs a purpose</span>`}${r.gaps.length ? `<button class="dm-sev s-${worst((d.gaps || []).filter((g) => r.gaps.includes(g.id)))}" data-act="tab" data-tab="gaps">${r.gaps.length} gap${r.gaps.length > 1 ? "s" : ""}</button>` : ""}</header>
-          <p class="muted">${esc(r.description || "")}</p>
-          <dl class="dm-rgrid">
-            <div><dt>Data principals</dt><dd>${esc(r.principals)}</dd></div>
-            <div><dt>Personal data (notice)</dt><dd>${cell(r.declared_categories, (c) => esc(catOf(c).label))}</dd></div>
-            <div><dt>Personal data (found)</dt><dd>${cell(r.found_categories, (c) => `<span class="${extra.includes(c) ? "dm-warn" : ""}" title="${extra.includes(c) ? "Not stated in the notice" : ""}">${esc(catOf(c).label)}</span>`)}</dd></div>
-            <div><dt>Data stores</dt><dd>${cell(r.tables, (t) => `<code class="dm-code">${esc(t)}</code>`)}</dd></div>
-            <div><dt>Systems / services</dt><dd>${cell(r.services, (s) => `<code class="dm-code">${esc(s)}</code>`)}</dd></div>
-            <div><dt>Recipients</dt><dd>${cell(r.recipients, (x) => `${esc(x.name)}${x.country ? ` (${esc(x.country)})` : ""}${x.dpa === true ? " · DPA ✓" : ` · <span class="dm-warn">DPA ${x.dpa === false ? "missing" : "?"}</span>`}`)}</dd></div>
-            <div><dt>Retention</dt><dd>${r.retention.length ? r.retention.map((x) => `<code class="dm-code">${esc(x.table)}</code> ${x.rules.length ? esc(x.rules.join("; ")) : `<span class="dm-warn">no rule</span>`}`).join("<br>") : `<span class="muted">–</span>`}</dd></div>
-            <div><dt>Safeguards</dt><dd>${cell(r.safeguards)}</dd></div>
-          </dl></article>`;
-      }).join("")}</div>`;
   }
   function gapCard(g) {
     return `<div class="dm-gap s-${g.severity}"><div class="dm-gtop"><span class="dm-sev s-${g.severity}">${SEV[g.severity]}</span><b>${esc(g.title)}</b></div>
@@ -493,20 +470,6 @@ const DataMap = (() => {
     S.saving = false; render();
   }
 
-  /* ---------- export ---------- */
-  function csv() {
-    const d = L(), q = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
-    const head = ["Purpose", "Description", "Legal basis", "Consent", "Data principals", "Personal data (notice)", "Personal data (found)", "Data stores", "Services", "Recipients", "Retention", "Safeguards", "Open gaps"];
-    const rows = d.ropa.map((r) => [r.name, r.description, BASIS[r.legal_basis] || r.legal_basis || "", r.consent_type || "", r.principals, (r.declared_categories || []).join("; "), (r.found_categories || []).join("; "),
-      r.tables.join("; "), r.services.join("; "), r.recipients.map((x) => `${x.name}${x.country ? ` (${x.country})` : ""}${x.dpa === true ? " DPA signed" : " DPA not recorded"}`).join("; "),
-      r.retention.map((x) => `${x.table}: ${x.rules.join(", ") || "no rule"}`).join("; "), r.safeguards.join("; "), r.gaps.length]);
-    const text = [head, ...rows].map((r) => r.map(q).join(",")).join("\n");
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(new Blob(["﻿" + text], { type: "text/csv" }));
-    a.download = `record-of-processing-${(ME?.client?.id || "client")}-${new Date().toISOString().slice(0, 10)}.csv`;
-    a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 4000);
-  }
-
   /* ---------- render ---------- */
   function render() {
     const body = $("dmBody"); if (!body) return;
@@ -524,7 +487,7 @@ const DataMap = (() => {
     if (S.tab === "map") drawMap();
     window.scrollTo(0, keepScroll);
   }
-  const tabBody = () => (S.tab === "map" ? mapTab() : S.tab === "inventory" ? inventoryTab() : S.tab === "ropa" ? ropaTab() : S.tab === "gaps" ? gapsTab() : S.tab === "detect" ? detectTab() : declTab());
+  const tabBody = () => (S.tab === "map" ? mapTab() : S.tab === "inventory" ? inventoryTab() : S.tab === "gaps" ? gapsTab() : S.tab === "detect" ? detectTab() : declTab());
   const swap = (el, html) => { if (el && el._html !== html) { el.innerHTML = html; el._html = html; } };
   function liveUpdate() {
     // update in place: never steal focus or a click, drop an unsaved declaration, or close the drawer
@@ -601,13 +564,11 @@ const DataMap = (() => {
         if (a === "scan") return scan();
         if (a === "pii-scan") return piiScan();
         if (a === "go-unmasked") return Telemetry.openUnmasked();
-        if (a === "tab") { S.tab = b.dataset.tab; if (S.tab === "gaps" && b.closest(".dm-ropa")) S.gapSev = ""; return render(); }
+        if (a === "tab") { S.tab = b.dataset.tab; return render(); }
         if (a === "tile") { const t = b.dataset.tile; S.tab = t === "g" ? "gaps" : t === "t" ? "inventory" : "map"; S.gapSev = ""; return render(); }
         if (a === "close") { S.sel = null; return redrawMapOnly(); }
         if (a === "locate") { S.tab = "map"; S.cat = ""; S.q = ""; const id = b.dataset.node; S.personalOnly = !(id.startsWith("t:") && !L().tables.find((t) => `t:${t.table}` === id)?.is_personal); S.sel = id; render(); $("dmWrap")?.scrollIntoView({ behavior: "smooth", block: "start" }); return; }
         if (a === "to-decl") { S.tab = "decl"; return render(); }
-        if (a === "csv") return csv();
-        if (a === "print") { document.body.classList.add("dm-printing"); const done = () => { document.body.classList.remove("dm-printing"); window.removeEventListener("afterprint", done); }; window.addEventListener("afterprint", done); window.print(); setTimeout(done, 1500); return; }
         if (a === "save") return saveDecl();
         if (a === "discard") { S.draft = null; S.dirty = false; S.saveErr = ""; return load(); }
         if (a === "proc-add") { setDraft((d) => d.processors.push({ id: "", name: "", role: "", purposes: [], data_categories: [], country: "", dpa: null, notes: "" })); return render(); }

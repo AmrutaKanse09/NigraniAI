@@ -1813,7 +1813,7 @@ SERVICES = {
         "PayInvoices": ("Use", "Pay invoices online with Razorpay", "server"),
         "ManageBillingProfile": ("Write", "Change the billing name, address, state and GSTIN", "server")}),
     "datamap": ("Data map", {
-        "Read": ("Read", "See the data map, inventory, record of processing and gaps", "server"),
+        "Read": ("Read", "See the data map, inventory and gaps", "server"),
         "Scan": ("Use", "Rebuild the data map from the database schema and the logs", "server"),
         "Edit": ("Write", "Change the declared purposes of services and tables, and the processors register", "server")}),
     "readiness": ("Readiness score", {
