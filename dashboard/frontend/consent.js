@@ -815,7 +815,8 @@ const Consent = (() => {
     const noticeSel = () => (edit
       ? `<select name="notice" aria-label="Notice">${pol.notices.map((n) => `<option value="${esc(n.id)}" ${n.id === p.notice ? "selected" : ""}>${esc(n.name)}</option>`).join("")}</select>`
       : tok(pol.notices.find((n) => n.id === p.notice)?.name || "a notice"));
-    const secs = () => (edit ? `<input name="grace_seconds" type="number" min="0" step="1" value="${esc(p.grace_seconds ?? 0)}" aria-label="Grace period in seconds"> seconds` : tok(`${num(p.grace_seconds || 0)} seconds`));
+    const gmax = Baseline.get()?.policy?.[r.id]?.grace_max;
+    const secs = () => (edit ? `<input name="grace_seconds" type="number" min="0" ${gmax != null ? `max="${gmax}"` : ""} step="1" value="${esc(p.grace_seconds ?? 0)}" aria-label="Grace period in seconds"> seconds${gmax != null ? ` (at most ${num(gmax)})` : ""}` : tok(`${num(p.grace_seconds || 0)} seconds`));
     switch (r.type) {
       case "notice_required": return `Flag any processing for a customer who hasn’t accepted the ${noticeSel()}.`;
       case "before_consent": return `Flag processing that happens before the customer gives consent, allowing ${secs()} of grace.`;
@@ -829,7 +830,7 @@ const Consent = (() => {
     }
   }
   function rulesHtml() {
-    const pol = P(), all = C.result?.findings || [];
+    const pol = P(), all = C.result?.findings || [], locks = Baseline.get(render)?.policy || {};
     const rows = pol.rules.map((r, i) => ({ r, i }));
     const group = (g) => {
       const list = rows.filter(({ r }) => (TEMPLATES[r.type]?.group || "Records") === g);
@@ -840,10 +841,11 @@ const Consent = (() => {
         ${list.map(({ r, i }) => {
           const n = all.filter((f) => f.rule === r.id).length;
           const status = !r.enabled ? `<span class="cp-rcount off">Off</span>` : n ? `<span class="cp-rcount bad">${num(n)} found</span>` : `<span class="cp-rcount ok">Passing</span>`;
-          return `<div class="cp-rule${r.enabled ? "" : " off"}${C.editRule === r.id ? " editing" : ""}">
+          const lock = locks[r.id];
+          return `<div class="cp-rule${r.enabled ? "" : " off"}${lock ? " locked" : ""}${C.editRule === r.id ? " editing" : ""}">
             <div class="cp-rrow">
-              <button class="cp-switch" role="switch" aria-checked="${r.enabled}" aria-label="Rule ${esc(r.id)} ${r.enabled ? "on" : "off"}" data-toggle-rule="${i}"><i></i></button>
-              <div class="cp-rtext"><p>${sentence(r, false)}</p><span>${esc(r.id)} · ${esc(r.name)} · ${esc(r.dpdp_ref)}</span></div>
+              ${lock ? `<span class="cp-switch-lock" title="Required by ${esc(lock.ref)}: always on"><svg class="i"><use href="#i-lock"/></svg></span>` : `<button class="cp-switch" role="switch" aria-checked="${r.enabled}" aria-label="Rule ${esc(r.id)} ${r.enabled ? "on" : "off"}" data-toggle-rule="${i}"><i></i></button>`}
+              <div class="cp-rtext"><p>${sentence(r, false)}</p><span>${esc(r.id)} · ${esc(r.name)} · ${esc(r.dpdp_ref)}${lock ? ` ${Baseline.tag(lock.ref)}` : ""}</span></div>
               <div class="cp-rside">${sevPill(r.severity)}${status}<button class="btn ghost" data-edit-rule="${esc(r.id)}" ${C.editRule === r.id ? "disabled" : ""}>Edit</button></div>
             </div>
             ${C.editRule === r.id ? ruleForm(r, false) : ""}
@@ -882,18 +884,20 @@ const Consent = (() => {
       </div>`;
   }
   function ruleForm(r, isNew) {
+    const lock = isNew ? null : Baseline.get()?.policy?.[r.id], ro = lock ? "readonly" : "";
     return `<form class="cp-redit" data-rule="${esc(r.id)}" data-new="${isNew ? 1 : 0}">
       ${isNew ? `<p class="cp-newlabel">New rule · ${esc(TEMPLATES[r.type]?.label || r.type)}</p>` : ""}
+      ${lock ? Baseline.note(`Required by ${esc(lock.ref)}. This check always runs and its legal reference is fixed. You can raise its severity${lock.grace_max != null ? " or shorten the grace period" : ""} and map it to your own notices and tables.`) : ""}
       <p class="cp-sentence">${sentence(r, true)}</p>
       <div class="cp-rfields">
-        <label class="field"><span>Name</span><input name="name" type="text" value="${esc(r.name)}" required></label>
-        <label class="field"><span>Severity</span><select name="severity">${SEV.map((s) => `<option value="${s}" ${r.severity === s ? "selected" : ""}>${cap(s)}</option>`).join("")}</select></label>
-        <label class="field wide"><span>DPDP reference</span><input name="dpdp_ref" type="text" value="${esc(r.dpdp_ref)}"></label>
+        <label class="field"><span>Name</span><input name="name" type="text" value="${esc(r.name)}" required ${ro}></label>
+        <label class="field"><span>Severity</span><select name="severity">${SEV.map((s) => `<option value="${s}" ${r.severity === s ? "selected" : ""} ${lock && !Baseline.sevAllowed(s, lock.severity_min) ? "disabled" : ""}>${cap(s)}</option>`).join("")}</select></label>
+        <label class="field wide"><span>DPDP reference</span><input name="dpdp_ref" type="text" value="${esc(r.dpdp_ref)}" ${ro}></label>
       </div>
       <div class="cp-rfoot">
         <span class="cp-preview" aria-live="polite"></span>
         <div class="cp-rbtns">
-          ${isNew ? "" : `<button type="button" class="btn ghost danger" data-act="delete-rule">Delete rule</button>`}
+          ${isNew || lock ? "" : `<button type="button" class="btn ghost danger" data-act="delete-rule">Delete rule</button>`}
           <button type="button" class="btn ghost" data-act="cancel-rule">Cancel</button>
           <button type="submit" class="btn primary">Apply</button>
         </div>
@@ -906,7 +910,7 @@ const Consent = (() => {
     const f = (n) => form.querySelector(`[name="${n}"]`);
     const params = { ...(base.params || {}) };
     if (f("notice")) params.notice = f("notice").value;
-    if (f("grace_seconds")) params.grace_seconds = Math.max(0, Number(f("grace_seconds").value) || 0);
+    if (f("grace_seconds")) { const mx = Number(f("grace_seconds").max) || Infinity; params.grace_seconds = Math.min(mx, Math.max(0, Number(f("grace_seconds").value) || 0)); }
     if (f("tables")) params.tables = f("tables").value.split(",").map((s) => s.trim()).filter(Boolean);
     return { ...base, name: f("name").value.trim() || base.name, severity: f("severity").value, dpdp_ref: f("dpdp_ref").value.trim(), params, isNew };
   }
@@ -1180,7 +1184,7 @@ const Consent = (() => {
     if ((b = t("[data-cust]")) && b.dataset.cust) { C.sel.customer = b.dataset.cust; C.custView = "detail"; C.showAllTimeline = false; render(); return $("cpBody").scrollIntoView({ block: "start" }); }
     if ((b = t("[data-cust-go]"))) { C.tab = "customers"; C.custView = "detail"; C.custFilter = "all"; C.custQuery = ""; C.lookup = null; C.custRule = ""; C.sel.customer = b.dataset.custGo; C.showAllTimeline = false; return render(); }
     if ((b = t("[data-edit-rule]"))) { C.tab = "rules"; C.editRule = b.dataset.editRule; C.newRule = null; C.picking = false; render(); return document.querySelector(".cp-redit")?.scrollIntoView({ block: "center" }); }
-    if ((b = t("[data-toggle-rule]"))) { const i = +b.dataset.toggleRule; return edit((d) => (d.rules[i].enabled = !d.rules[i].enabled)); }
+    if ((b = t("[data-toggle-rule]"))) { const i = +b.dataset.toggleRule; if (Baseline.get()?.policy?.[P().rules[i]?.id]) return; return edit((d) => (d.rules[i].enabled = !d.rules[i].enabled)); }
     if ((b = t("[data-new-rule]"))) {
       const type = b.dataset.newRule, tpl = TEMPLATES[type];
       let n = 1; while (P().rules.some((r) => r.id === `R${n}`)) n++;

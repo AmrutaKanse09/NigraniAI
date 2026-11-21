@@ -50,6 +50,8 @@ from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+import dpdp_baseline
+
 ROOT = Path(__file__).resolve().parent
 DATA = ROOT / "data"
 HISTORY = DATA / "history"
@@ -509,12 +511,25 @@ def read_doc(kind):
     return json.loads(f.read_text())
 
 
-def save_doc(kind, doc, base_version, user, note):
+def baseline_of(kind):
+    """The shipped default document: the legal floor for this copy (see dpdp_baseline.py)."""
+    return json.loads(STORES[kind]["default"].read_text())
+
+
+def save_doc(kind, doc, base_version, user, note, coerce=False):
+    """Save a new version. Anything weaker than the DPDP baseline is refused; with coerce=True (restoring an
+    old version, or the start-up check) it is corrected to the baseline instead and the note says so."""
     st = STORES[kind]
     with _policy_lock:
         current = read_doc(kind)
         if base_version != current["version"]:
             return None, current
+        fixed, issues = dpdp_baseline.check(kind, doc, baseline_of(kind))
+        if issues and not coerce:
+            raise ValueError("Not saved: the DPDP baseline can be made stricter but not weaker. " + " ".join(issues))
+        if issues:
+            doc = fixed
+            note = f"{note} · locked to the DPDP baseline: {len(issues)} correction{'s' if len(issues) != 1 else ''}"
         st["validate"](doc)
         doc = {k: v for k, v in doc.items() if k not in ("version", "updated_at", "updated_by", "change_note")}
         doc.update(version=current["version"] + 1, updated_at=now_iso(), updated_by=user,
@@ -524,6 +539,18 @@ def save_doc(kind, doc, base_version, user, note):
         h.mkdir(parents=True, exist_ok=True)
         write_tracked(h / f"v{doc['version']}.json", json.dumps(doc, indent=2))
         return doc, None
+
+
+def apply_baseline():
+    """At start-up, bring saved rule sets that are weaker than the DPDP baseline back up to it, as a new
+    recorded version (so the change shows in the version history and the evidence chain)."""
+    for kind in STORES:
+        cur = read_doc(kind)
+        _, issues = dpdp_baseline.check(kind, cur, baseline_of(kind))
+        if issues:
+            doc, _ = save_doc(kind, cur, cur["version"], "system (DPDP baseline)", "DPDP baseline applied", coerce=True)
+            audit("system (DPDP baseline)", f"{kind}.baseline", f"v{doc['version']}: " + " ".join(issues)[:500])
+            print(f"[consent] {kind}: locked to the DPDP baseline ({len(issues)} corrections) -> v{doc['version']}", flush=True)
 
 
 def history_of(kind):
@@ -4540,7 +4567,7 @@ STORE_ACTIONS = {"policy": ("consent:ReadFindings", "consent:EditPolicy", "conse
                  "retention-policy": ("retention:ReadSchedule", "retention:EditSchedule", "retention:RestoreScheduleVersion"),
                  "breach-policy": ("breach:ReadSignals", "breach:EditDetectors", "breach:RestoreDetectorsVersion")}
 ROUTE_ACTIONS = [
-    ("GET", r"/api/(me|audit|ai/status|iam/catalog)", None),
+    ("GET", r"/api/(me|audit|ai/status|iam/catalog|dpdp-baseline)", None),
     ("GET", r"/api/iam", ("iam:ListUsers", "iam:ListPolicies")),
     ("POST", r"/api/iam/validate", ("iam:ListPolicies", "iam:ManagePolicies")),
     ("POST", r"/api/iam/simulate", "iam:SimulatePolicy"),
@@ -4680,6 +4707,8 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if path.path == "/api/readiness":
                 return self.send(200, {"history": read_readiness()[-20:]})
+            if path.path == "/api/dpdp-baseline":
+                return self.send(200, dpdp_baseline.describe({k: baseline_of(k) for k in STORES}))
             if path.path == "/api/evidence":
                 return self.send(200, evidence_view(self.token()))
             if path.path == "/api/datamap":
@@ -5000,7 +5029,7 @@ class Handler(BaseHTTPRequestHandler):
         if not f.exists():
             return self.send(404, {"error": "no such version"})
         b = self.body()
-        doc, current = save_doc(kind, json.loads(f.read_text()), b.get("base_version"), user, f"Restored version {v}")
+        doc, current = save_doc(kind, json.loads(f.read_text()), b.get("base_version"), user, f"Restored version {v}", coerce=True)
         if current:
             return self.send(409, {"error": "The policy was changed by someone else. Reload and try again.", "current": current})
         audit(user, f"{kind}.restore", f"v{v} → v{doc['version']}")
@@ -5143,6 +5172,7 @@ def main():
     read_doc("breach")
     with _ledger_lock:
         _ledger_ready()
+    apply_baseline()
     if central_configured():
         threading.Thread(target=_central_loop, daemon=True).start()
     read_plan()

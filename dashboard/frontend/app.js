@@ -15,6 +15,25 @@ const can = (action) => !!ME && (ME.root || ME.allowed.includes(action));
 // The action each section needs before it appears in the navigation.
 const VIEW_ACTION = { dashboard: "dashboard:View", telemetry: "telemetry:ReadLogs", consent: "consent:ReadFindings", retention: "retention:ReadSchedule", breach: "breach:ReadSignals", anomaly: "breach:ReadSignals", ai: "ai:Ask", iam: null, usage: null, readiness: null, evidence: null, datamap: "datamap:Read", account: null };
 const canUsage = () => can("usage:ViewOwnUsage") || can("usage:ViewAllUsage");
+// The DPDP baseline (/api/dpdp-baseline): what the law fixes in each rule set. Consent, Retention, Breach and
+// Anomaly lock those items: they stay on, keep their legal reference, and can be made stricter but not weaker.
+// The server enforces the same limits on every save.
+const Baseline = (() => {
+  const base = ((window.COMPLIANCE_CONFIG || {}).CONSENT_API || "http://localhost:8091").replace(/\/$/, "");
+  let data = null, pending = null;
+  function load() {
+    if (data) return Promise.resolve(data);
+    return pending || (pending = fetch(`${base}/api/dpdp-baseline`, { headers: { Authorization: `Bearer ${session?.access_token || ""}` } })
+      .then((r) => (r.ok ? r.json() : null)).then((d) => { data = d; pending = null; return d; }).catch(() => { pending = null; return null; }));
+  }
+  // `then` re-renders the caller once the baseline arrives (the first render may run before it).
+  const get = (then) => { if (!data && then) load().then((d) => d && then()); return data; };
+  const tag = (ref) => `<span class="dpdp-lock" title="Fixed by law${ref ? `: ${esc(ref)}` : ""}. It can be made stricter, not weaker."><svg class="i"><use href="#i-lock"/></svg>DPDP baseline</span>`;
+  const note = (text) => `<p class="dpdp-note"><svg class="i"><use href="#i-lock"/></svg><span>${text}</span></p>`;
+  const SEV = ["low", "medium", "high", "critical"];
+  const sevAllowed = (s, min) => !min || SEV.indexOf(s) >= SEV.indexOf(min);
+  return { load, get, tag, note, sevAllowed };
+})();
 function applyAccess() {
   document.querySelectorAll("#nav [data-view]").forEach((b) => (b.hidden = b.dataset.view === "iam" ? !(can("iam:ListUsers") || can("iam:ListPolicies")) : b.dataset.view === "usage" ? !canUsage() : b.dataset.view === "readiness" ? !(can("readiness:Read") || can("readiness:Run")) : b.dataset.view === "evidence" ? !(can("readiness:Read") || can("readiness:VerifyIntegrity") || can("readiness:ExportEvidence")) : !!VIEW_ACTION[b.dataset.view] && !can(VIEW_ACTION[b.dataset.view])));
   // body.deny-<service>-<Action> for every action not allowed; style.css hides the matching controls.
@@ -167,6 +186,7 @@ function show(view, opts = {}) {
   Object.keys(TITLES).forEach((v) => ($(`view-${v}`).hidden = v !== view));
   $("tStatus").hidden = view !== "telemetry";
   $("live").closest("label").hidden = view === "account" || view === "ai" || view === "iam" || view === "readiness" || view === "evidence";
+  Latency.sync();
   billingBanner();
   if (view === "usage" && ME && !canUsage()) return show(firstAllowed(), { replace: true });
   // Each view is its own browser history entry (#view), so Back and Forward move between views
@@ -196,7 +216,44 @@ window.addEventListener("popstate", () => {
 // The "Live" badge in each section header follows the Live switch.
 function syncLivePills() { const on = $("live").checked; document.querySelectorAll(".vh-live").forEach((p) => { p.classList.toggle("off", !on); p.textContent = on ? "Live" : "Paused"; }); }
 syncLivePills();
-$("live").addEventListener("change", () => { syncLivePills(); if (currentView === "datamap") DataMap.liveChanged(); });
+// Live latency: a tiny unauthenticated ping (/api/health, not metered) every 5 s while Live is on, timed to the
+// response. Shows the latest round trip, coloured by speed, with the recent median in the tooltip.
+const Latency = (() => {
+  const el = $("liveLat"), BASE = ((window.COMPLIANCE_CONFIG || {}).CONSENT_API || "http://localhost:8091").replace(/\/$/, "");
+  let timer = null, busy = false, last = [];
+  const on = () => $("live").checked && !$("live").closest("label").hidden && !$("appView").hidden && !document.hidden;
+  async function ping() {
+    if (busy || !on()) return;
+    busy = true;
+    const t0 = performance.now();
+    try {
+      const r = await fetch(`${BASE}/api/health`, { cache: "no-store" });
+      await r.text();
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const ms = Math.round(performance.now() - t0);
+      last = [...last.slice(-11), ms];
+      const med = [...last].sort((a, b) => a - b)[last.length >> 1];
+      el.className = `lat ${ms < 150 ? "good" : ms < 400 ? "ok" : "slow"}`;
+      el.querySelector("b").textContent = ms;
+      el.querySelector("small").textContent = "ms";
+      el.title = `Round trip to the NigraniAI server: ${ms} ms now, ${med} ms typical over the last ${last.length} checks (every 5 s)`;
+    } catch {
+      el.className = "lat down";
+      el.querySelector("b").textContent = "Offline";
+      el.querySelector("small").textContent = "";
+      el.title = "The NigraniAI server did not answer the last check";
+    } finally { busy = false; }
+  }
+  function sync() {
+    const live = on();
+    el.hidden = !live;
+    if (live && !timer) { ping(); timer = setInterval(ping, 5000); }
+    if (!live && timer) { clearInterval(timer); timer = null; }
+  }
+  document.addEventListener("visibilitychange", sync);
+  return { sync };
+})();
+$("live").addEventListener("change", () => { syncLivePills(); Latency.sync(); if (currentView === "datamap") DataMap.liveChanged(); });
 let ticks = 0;
 setInterval(() => {
   if (!$("live").checked || document.hidden || $("appView").hidden) return;

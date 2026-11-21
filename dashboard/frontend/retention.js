@@ -376,7 +376,7 @@ const Retention = (() => {
 
   /* ---------- Schedule (editor) ---------- */
   function scheduleHtml() {
-    const pol = P(), rules = pol.rules.map((r, i) => ({ r, i }));
+    const pol = P(), rules = pol.rules.map((r, i) => ({ r, i })), locks = Baseline.get(render)?.retention || {};
     const group = (g) => {
       const list = rules.filter(({ r }) => TYPES[r.type]?.group === g);
       const fresh = S.newRule && TYPES[S.newRule.type].group === g ? [S.newRule] : [];
@@ -384,11 +384,11 @@ const Retention = (() => {
       return `<div class="panel cp-rgroup"><h3>${esc(g)}</h3>
         ${fresh.map((r) => `<div class="cp-rule editing new">${ruleForm(r, true)}</div>`).join("")}
         ${list.map(({ r, i }) => {
-          const conf = conflictsFor(r, pol.rules);
-          return `<div class="cp-rule${r.enabled ? "" : " off"}${S.editRule === r.id ? " editing" : ""}">
+          const conf = conflictsFor(r, pol.rules), lock = locks[r.id];
+          return `<div class="cp-rule${r.enabled ? "" : " off"}${lock ? " locked" : ""}${S.editRule === r.id ? " editing" : ""}">
             <div class="cp-rrow">
-              <button class="cp-switch" role="switch" aria-checked="${r.enabled}" aria-label="Rule ${esc(r.id)} ${r.enabled ? "on" : "off"}" data-toggle-rule="${i}"><i></i></button>
-              <div class="cp-rtext"><p>${sentence(r)}</p><span>${esc(r.id)} · ${esc(where(r))} · ${esc(r.ref || "")}</span>
+              ${lock ? `<span class="cp-switch-lock" title="Required by ${esc(lock.ref || "law")}: always on"><svg class="i"><use href="#i-lock"/></svg></span>` : `<button class="cp-switch" role="switch" aria-checked="${r.enabled}" aria-label="Rule ${esc(r.id)} ${r.enabled ? "on" : "off"}" data-toggle-rule="${i}"><i></i></button>`}
+              <div class="cp-rtext"><p>${sentence(r)}</p><span>${esc(r.id)} · ${esc(where(r))} · ${esc(r.ref || "")}${lock ? ` ${Baseline.tag(lock.ref)}` : ""}</span>
                 ${conf.length && r.enabled ? `<span class="rt-conf-inline">Conflicts with ${conf.map((c) => esc(c.id)).join(", ")}</span>` : ""}</div>
               <div class="cp-rside">${pill(statusOf(r))}<button class="btn ghost" data-edit-rule="${esc(r.id)}" ${S.editRule === r.id ? "disabled" : ""}>Edit</button></div>
             </div>
@@ -437,16 +437,21 @@ const Retention = (() => {
     if (source === "guardrail") return [];
     return (S.schema[table] || []).filter((c) => !/timestamp|date/.test(c.type) && /^[A-Za-z_][A-Za-z0-9_]*$/.test(c.name)).map((c) => c.name);
   }
+  const UNIT_S = { seconds: 1, minutes: 60, hours: 3600, days: 86400, months: 2629800, years: 31557600 };
+  const keepSecs = (k) => (Number(k?.n) || 0) * (UNIT_S[k?.unit] || 0);
+  const keepText = (k) => `${k.n} ${k.n === 1 ? String(k.unit).replace(/s$/, "") : k.unit}`;
   function ruleForm(r, isNew) {
-    const period = (label = "Period") => `<label class="field"><span>${label}</span><span class="rt-period"><input name="keep_n" type="number" min="0" step="1" value="${esc(r.keep?.n ?? 1)}" aria-label="${label} amount">
+    const lock = isNew ? null : Baseline.get()?.retention?.[r.id], ro = lock ? "readonly" : "";
+    const limit = lock?.keep_min ? ` (at least ${keepText(lock.keep_min)})` : lock?.keep_max ? ` (at most ${keepText(lock.keep_max)})` : "";
+    const period = (label = "Period") => `<label class="field"><span>${label}${limit}</span><span class="rt-period"><input name="keep_n" type="number" min="0" step="1" value="${esc(r.keep?.n ?? 1)}" aria-label="${label} amount">
       <select name="keep_unit" aria-label="${label} unit">${UNITS.map((u) => `<option ${r.keep?.unit === u ? "selected" : ""}>${u}</option>`).join("")}</select></span></label>`;
-    const text = (name, label, v, wide) => `<label class="field${wide ? " wide" : ""}"><span>${label}</span><input name="${name}" type="text" value="${esc(v ?? "")}"></label>`;
+    const text = (name, label, v, wide, attrs = "") => `<label class="field${wide ? " wide" : ""}"><span>${label}</span><input name="${name}" type="text" value="${esc(v ?? "")}" ${attrs}></label>`;
     const src = `${r.source || "shop"}:${r.table || ""}`;
     let fields = "";
     if (r.type === "erasure") {
       fields = period("Erase within") + `<fieldset class="rt-stepset"><legend>Steps to check</legend>${Object.entries(STEPS).map(([k, s]) => `<label><input type="checkbox" name="step" value="${k}" ${(r.steps || []).includes(k) ? "checked" : ""}> ${esc(s.label)}</label>`).join("")}</fieldset>`;
     } else if (r.type === "inactivity") {
-      fields = period("Inactive for") + `<label class="field"><span>Notice before erasure (hours)</span><input name="notice_hours" type="number" min="0" value="${esc(r.notice_hours ?? 48)}"></label>`;
+      fields = period("Inactive for") + `<label class="field"><span>Notice before erasure (hours)${lock?.notice_min ? ` (at least ${lock.notice_min})` : ""}</span><input name="notice_hours" type="number" min="${lock?.notice_min || 0}" value="${esc(r.notice_hours ?? 48)}"></label>`;
     } else {
       fields = text("name", "Data name", r.name) +
         `<label class="field"><span>Table</span><select name="table" data-rt-table>${tableChoices().map((t) => `<option value="${esc(t)}" ${t === src ? "selected" : ""}>${esc(t.replace(":", " · "))}</option>`).join("")}</select></label>` +
@@ -458,11 +463,12 @@ const Retention = (() => {
     }
     return `<form class="cp-redit" data-rule="${esc(r.id)}" data-new="${isNew ? 1 : 0}">
       ${isNew ? `<p class="cp-newlabel">New rule · ${esc(TYPES[r.type].label)}</p>` : ""}
+      ${lock ? Baseline.note(`${esc(lock.why)} This rule always applies and its legal reference is fixed; you can make the period stricter and point it at your own tables.`) : ""}
       <div class="cp-rfields">${fields}${r.type === "erasure" || r.type === "inactivity" ? text("name", "Rule name", r.name) : ""}
-        ${text("ref", "Legal reference", r.ref, true)}</div>
+        ${text("ref", "Legal reference", r.ref, true, ro)}</div>
       <label class="field"><span>Why (shown on the record list)</span><textarea name="basis" rows="2">${esc(r.basis || "")}</textarea></label>
       <div class="cp-rfoot"><span class="cp-preview" aria-live="polite"></span>
-        <div class="cp-rbtns">${isNew ? "" : `<button type="button" class="btn ghost danger" data-act="delete-rule">Delete rule</button>`}
+        <div class="cp-rbtns">${isNew || lock ? "" : `<button type="button" class="btn ghost danger" data-act="delete-rule">Delete rule</button>`}
           <button type="button" class="btn ghost" data-act="cancel-rule">Cancel</button><button type="submit" class="btn primary">Apply</button></div></div>
     </form>`;
   }
@@ -507,6 +513,10 @@ const Retention = (() => {
     if (rule.type === "erasure" && !rule.steps.length) return toast("Choose at least one erasure step.");
     if ((rule.type === "age" || rule.type === "legal_minimum") && !rule.clock_column) return toast("Choose the date column the period is measured from.");
     if (rule.type === "age" && rule.filter_column && !rule.filter_value) return toast("Enter the value for the “Only where” filter, or choose Any record.");
+    const lock = isNew ? null : Baseline.get()?.retention?.[rule.id];
+    if (lock?.keep_min && keepSecs(rule.keep) < keepSecs(lock.keep_min)) return toast(`The law requires keeping this for at least ${keepText(lock.keep_min)} (${lock.ref}).`);
+    if (lock?.keep_max && keepSecs(rule.keep) > keepSecs(lock.keep_max)) return toast(`The DPDP baseline allows at most ${keepText(lock.keep_max)} here.`);
+    if (lock?.notice_min && !(rule.notice_hours >= lock.notice_min)) return toast(`Customers must be warned at least ${lock.notice_min} hours before erasure (Rule 8(2)).`);
     S.editRule = null; S.newRule = null;
     edit((d) => { if (isNew) d.rules.push(rule); else d.rules[d.rules.findIndex((x) => x.id === rule.id)] = rule; });
   }
@@ -563,7 +573,7 @@ const Retention = (() => {
     if ((b = t("[data-rec-filter]"))) { S.recFilter = b.dataset.recFilter; S.recPage = 0; S.recRows = null; return render(); }
     if ((b = t("[data-rec-page]"))) { S.recPage += b.dataset.recPage === "next" ? 1 : -1; S.recRows = null; return render(); }
     if ((b = t("[data-er-filter]"))) { S.erFilter = b.dataset.erFilter; return render(); }
-    if ((b = t("[data-toggle-rule]"))) { const i = +b.dataset.toggleRule; return edit((d) => (d.rules[i].enabled = !d.rules[i].enabled)); }
+    if ((b = t("[data-toggle-rule]"))) { const i = +b.dataset.toggleRule; if (Baseline.get()?.retention?.[P().rules[i]?.id]) return; return edit((d) => (d.rules[i].enabled = !d.rules[i].enabled)); }
     if ((b = t("[data-edit-rule]"))) { S.editRule = b.dataset.editRule; S.newRule = null; S.picking = false; render(); const f = document.querySelector("#rtBody .cp-redit"); f?.scrollIntoView({ block: "center" }); return f && preview(f); }
     if ((b = t("[data-new-rule]"))) {
       const type = b.dataset.newRule, pfx = { erasure: "E", age: "A", legal_minimum: "L", inactivity: "I" }[type];

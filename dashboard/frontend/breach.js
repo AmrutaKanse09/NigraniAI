@@ -730,9 +730,9 @@ Date: ${today} (IST)`;
         </div>
         <aside class="cp-rside-col">
           <div class="panel cp-scard ml-set">
-            <div class="cp-list-head flat"><h3>Model settings</h3><button class="cp-switch" role="switch" aria-checked="${a.enabled}" aria-label="Anomaly model ${a.enabled ? "on" : "off"}" data-anom-toggle><i></i></button></div>
+            <div class="cp-list-head flat"><h3>Model settings</h3>${Baseline.get(render)?.breach?.anomaly?.enabled ? `<span class="cp-switch-lock" title="Part of breach detection under DPDP Act s.8(5): always on"><svg class="i"><use href="#i-lock"/></svg></span>` : `<button class="cp-switch" role="switch" aria-checked="${a.enabled}" aria-label="Anomaly model ${a.enabled ? "on" : "off"}" data-anom-toggle><i></i></button>`}</div>
             <fieldset class="ml-sens" ${a.enabled ? "" : "disabled"}><legend>Sensitivity</legend>
-              ${Object.entries(SENS).map(([k, [l, d, c]]) => `<label class="ml-opt${a.sensitivity === k ? " on" : ""}"><input type="radio" name="ml-sens" value="${k}" ${a.sensitivity === k ? "checked" : ""} data-anom="sensitivity"><span><b>${l}</b><small>${esc(d)} · cut-off ${c}</small></span></label>`).join("")}
+              ${Object.entries(SENS).map(([k, [l, d, c]]) => `<label class="ml-opt${a.sensitivity === k ? " on" : ""}"><input type="radio" name="ml-sens" value="${k}" ${a.sensitivity === k ? "checked" : ""} ${["low", "medium", "high"].indexOf(k) < ["low", "medium", "high"].indexOf(Baseline.get()?.breach?.anomaly?.sensitivity_min || "low") ? "disabled" : ""} data-anom="sensitivity"><span><b>${l}</b><small>${esc(d)} · cut-off ${c}</small></span></label>`).join("")}
             </fieldset>
             <label class="br-kvin"><span>Time slice</span><span><select data-anom="bucket_minutes" ${a.enabled ? "" : "disabled"}>${[5, 10, 15, 30, 60].map((n) => `<option value="${n}" ${a.bucket_minutes === n ? "selected" : ""}>${n} min</option>`).join("")}</select></span></label>
             <label class="br-kvin"><span>Learn first for</span><span><input type="number" min="4" max="1000" value="${esc(a.min_history)}" data-anom="min_history" ${a.enabled ? "" : "disabled"}> slices</span></label>
@@ -753,17 +753,17 @@ Date: ${today} (IST)`;
     return `Signal when ${what} in ${esc(SOURCE_LABEL[d.source])} where ${conds}, within ${tok(winText(d.window))}${d.group_by ? ` for the same ${esc(fl(d.group_by))}` : ""}.`;
   }
   function detectorsHtml() {
-    const pol = P(), c = pol.clocks, ct = pol.contact || {};
+    const pol = P(), c = pol.clocks, ct = pol.contact || {}, bl = Baseline.get(render)?.breach || {}, locks = bl.detectors || {};
     const group = (cat) => {
       const list = pol.detectors.map((d, i) => ({ d, i })).filter(({ d }) => d.category === cat);
       const fresh = S.newDet && S.newDet.category === cat ? [S.newDet] : [];
       if (!list.length && !fresh.length) return "";
       return `<div class="panel cp-rgroup"><h3>${esc(CATS[cat].label)} <small class="br-gsub">${esc(CATS[cat].desc)}</small></h3>
         ${fresh.map((d) => `<div class="cp-rule editing new">${detForm(d, true)}</div>`).join("")}
-        ${list.map(({ d, i }) => { const r = S.scan.results[d.id]; return `<div class="cp-rule${d.enabled ? "" : " off"}${S.editDet === d.id ? " editing" : ""}">
+        ${list.map(({ d, i }) => { const r = S.scan.results[d.id], lock = locks[d.id]; return `<div class="cp-rule${d.enabled ? "" : " off"}${lock ? " locked" : ""}${S.editDet === d.id ? " editing" : ""}">
           <div class="cp-rrow">
-            <button class="cp-switch" role="switch" aria-checked="${d.enabled}" aria-label="Detector ${esc(d.id)} ${d.enabled ? "on" : "off"}" data-toggle-det="${i}"><i></i></button>
-            <div class="cp-rtext"><p><b>${esc(d.name)}</b></p><p class="br-sent">${sentence(d)}</p><span>${esc(d.id)} · ${esc(d.ref || "")}${d.auto_open ? ` · <b class="br-auto">Opens an incident automatically</b>` : ""}</span></div>
+            ${lock ? `<span class="cp-switch-lock" title="Part of the DPDP baseline: always on"><svg class="i"><use href="#i-lock"/></svg></span>` : `<button class="cp-switch" role="switch" aria-checked="${d.enabled}" aria-label="Detector ${esc(d.id)} ${d.enabled ? "on" : "off"}" data-toggle-det="${i}"><i></i></button>`}
+            <div class="cp-rtext"><p><b>${esc(d.name)}</b></p><p class="br-sent">${sentence(d)}</p><span>${esc(d.id)} · ${esc(d.ref || "")}${d.auto_open ? ` · <b class="br-auto">Opens an incident automatically</b>` : ""}${lock ? ` ${Baseline.tag(lock.ref)}` : ""}</span></div>
             <div class="cp-rside">${sev(d.severity)}<span class="cp-rcount ${!d.enabled ? "off" : r?.signals.length ? "bad" : "ok"}">${!d.enabled ? "Off" : S.draft ? "" : r ? (r.signals.length ? plural(r.signals.length, "signal") : "Quiet") : ""}</span><button class="btn ghost" data-edit-det="${esc(d.id)}" ${S.editDet === d.id ? "disabled" : ""}>Edit</button></div>
           </div>
           ${S.editDet === d.id ? detForm(d, false) : ""}
@@ -781,7 +781,7 @@ Date: ${today} (IST)`;
         <aside class="cp-rside-col">
           <div class="panel cp-scard"><h3>Response clocks</h3>
             <p class="rt-help">Hours from becoming aware. The law fixes 72 h for the Board's detailed report and 6 h for CERT-In; “without delay” targets are yours to set.</p>
-            ${[["cert_in_hours", "CERT-In report"], ["board_initial_hours", "Initial intimation to the Board"], ["principals_hours", "Notice to customers"], ["board_report_hours", "Detailed report to the Board"], ["warn_hours", "Warn when this close"]].map(([k, l]) => `<label class="br-kvin"><span>${esc(l)}</span><span><input type="number" min="1" max="720" value="${esc(c[k])}" data-clock="${k}"> h</span></label>`).join("")}
+            ${[["cert_in_hours", "CERT-In report"], ["board_initial_hours", "Initial intimation to the Board"], ["principals_hours", "Notice to customers"], ["board_report_hours", "Detailed report to the Board"], ["warn_hours", "Warn when this close"]].map(([k, l]) => `<label class="br-kvin" ${bl.clocks_max?.[k] ? `title="${esc(bl.clocks_max[k].why)}"` : ""}><span>${esc(l)}${bl.clocks_max?.[k] ? ` <small class="dpdp-max"><svg class="i"><use href="#i-lock"/></svg>max ${bl.clocks_max[k].max} h</small>` : ""}</span><span><input type="number" min="1" max="${bl.clocks_max?.[k]?.max || (k === "warn_hours" ? c.board_report_hours : 720)}" value="${esc(c[k])}" data-clock="${k}"> h</span></label>`).join("")}
           </div>
           <div class="panel cp-scard"><h3>Contact for notices</h3>
             <p class="rt-help">Named in every customer notice (Rule 7(1)(e)) and Board intimation.</p>
@@ -807,35 +807,37 @@ Date: ${today} (IST)`;
   }
   function detForm(d, isNew) {
     const fields = FIELDS[d.source] || {};
+    const lock = isNew ? null : Baseline.get()?.breach?.detectors?.[d.id], dis = lock ? "disabled" : "";
     const opsFor = (f) => (fields[f] === "array" ? ["has"] : fields[f] === "bool" ? ["is"] : fields[f] === "int" ? ["eq", "neq", "gt", "gte", "lt", "lte", "in"] : ["eq", "neq", "in"]);
     const cond = (m, k) => `<div class="br-cond" data-cond>
-      <select name="c_field" aria-label="Field">${Object.keys(fields).map((f) => `<option value="${f}" ${m.field === f ? "selected" : ""}>${esc(fl(f))}</option>`).join("")}</select>
-      <select name="c_op" aria-label="Condition">${opsFor(m.field).map((o) => `<option value="${o}" ${m.op === o ? "selected" : ""}>${esc(OPS[o])}</option>`).join("")}</select>
-      ${fields[m.field] === "bool" ? `<select name="c_value" aria-label="Value">${["true", "false"].map((x) => `<option ${String(m.value) === x ? "selected" : ""}>${x}</option>`).join("")}</select>` : `<input type="text" name="c_value" value="${esc(m.value)}" aria-label="Value" placeholder="${m.op === "in" ? "a, b, c" : "value"}">`}
-      <button type="button" class="icon-btn" data-act="cond-del" aria-label="Remove condition">×</button></div>`;
+      <select name="c_field" aria-label="Field" ${dis}>${Object.keys(fields).map((f) => `<option value="${f}" ${m.field === f ? "selected" : ""}>${esc(fl(f))}</option>`).join("")}</select>
+      <select name="c_op" aria-label="Condition" ${dis}>${opsFor(m.field).map((o) => `<option value="${o}" ${m.op === o ? "selected" : ""}>${esc(OPS[o])}</option>`).join("")}</select>
+      ${fields[m.field] === "bool" ? `<select name="c_value" aria-label="Value" ${dis}>${["true", "false"].map((x) => `<option ${String(m.value) === x ? "selected" : ""}>${x}</option>`).join("")}</select>` : `<input type="text" name="c_value" value="${esc(m.value)}" aria-label="Value" ${dis} placeholder="${m.op === "in" ? "a, b, c" : "value"}">`}
+      ${lock ? "" : `<button type="button" class="icon-btn" data-act="cond-del" aria-label="Remove condition">×</button>`}</div>`;
     return `<form class="cp-redit" data-det="${esc(d.id)}" data-new="${isNew ? 1 : 0}">
       ${isNew ? `<p class="cp-newlabel">New detector · ${esc(d.id)}</p>` : ""}
+      ${lock ? Baseline.note(`Part of the DPDP baseline (${esc(lock.ref || "DPDP Act s.8(5)")}). It always runs and what it watches is fixed. You can make it more sensitive (signal at ${num(lock.threshold_max)} or fewer), raise its severity, and write your own first checks.`) : ""}
       <div class="cp-rfields">
-        <label class="field wide"><span>Name</span><input type="text" name="name" value="${esc(d.name)}" maxlength="120"></label>
-        <label class="field"><span>Logs</span><select name="source" data-det-source>${Object.keys(FIELDS).map((s) => `<option value="${s}" ${d.source === s ? "selected" : ""}>${esc(cap(SOURCE_LABEL[s]))}</option>`).join("")}</select></label>
+        <label class="field wide"><span>Name</span><input type="text" name="name" value="${esc(d.name)}" maxlength="120" ${dis}></label>
+        <label class="field"><span>Logs</span><select name="source" data-det-source ${dis}>${Object.keys(FIELDS).map((s) => `<option value="${s}" ${d.source === s ? "selected" : ""}>${esc(cap(SOURCE_LABEL[s]))}</option>`).join("")}</select></label>
       </div>
-      <fieldset class="br-conds"><legend>Count log lines where</legend>${(d.match || []).map(cond).join("") || `<p class="muted">No conditions: every line counts.</p>`}<button type="button" class="link" data-act="cond-add">+ Add condition</button></fieldset>
+      <fieldset class="br-conds"><legend>Count log lines where</legend>${(d.match || []).map(cond).join("") || `<p class="muted">No conditions: every line counts.</p>`}${lock ? "" : `<button type="button" class="link" data-act="cond-add">+ Add condition</button>`}</fieldset>
       <div class="cp-rfields">
-        <label class="field"><span>Measure</span><select name="measure" data-det-measure><option value="count" ${d.measure !== "sum" ? "selected" : ""}>Number of lines</option>${Object.entries(fields).filter(([, t]) => t === "int").map(([f]) => `<option value="sum:${f}" ${d.measure === "sum" && d.sum_field === f ? "selected" : ""}>Total ${esc(fl(f))}</option>`).join("")}</select></label>
-        <label class="field"><span>Signal at</span><input type="number" name="threshold" min="1" value="${esc(d.threshold)}"></label>
-        <label class="field"><span>Within</span><span class="rt-period"><input type="number" name="win_n" min="1" value="${esc(d.window.n)}" aria-label="Window amount"><select name="win_unit" aria-label="Window unit">${["minutes", "hours", "days"].map((u) => `<option ${d.window.unit === u ? "selected" : ""}>${u}</option>`).join("")}</select></span></label>
-        <label class="field"><span>Per</span><select name="group_by"><option value="">All lines together</option>${Object.entries(fields).filter(([, t]) => t === "text").map(([f]) => `<option value="${f}" ${d.group_by === f ? "selected" : ""}>Same ${esc(fl(f))}</option>`).join("")}</select></label>
+        <label class="field"><span>Measure</span><select name="measure" data-det-measure ${dis}><option value="count" ${d.measure !== "sum" ? "selected" : ""}>Number of lines</option>${Object.entries(fields).filter(([, t]) => t === "int").map(([f]) => `<option value="sum:${f}" ${d.measure === "sum" && d.sum_field === f ? "selected" : ""}>Total ${esc(fl(f))}</option>`).join("")}</select></label>
+        <label class="field"><span>Signal at</span><input type="number" name="threshold" min="1" ${lock ? `max="${lock.threshold_max}"` : ""} value="${esc(d.threshold)}"></label>
+        <label class="field"><span>Within</span><span class="rt-period"><input type="number" name="win_n" min="1" value="${esc(d.window.n)}" aria-label="Window amount" ${dis}><select name="win_unit" aria-label="Window unit" ${dis}>${["minutes", "hours", "days"].map((u) => `<option ${d.window.unit === u ? "selected" : ""}>${u}</option>`).join("")}</select></span></label>
+        <label class="field"><span>Per</span><select name="group_by" ${dis}><option value="">All lines together</option>${Object.entries(fields).filter(([, t]) => t === "text").map(([f]) => `<option value="${f}" ${d.group_by === f ? "selected" : ""}>Same ${esc(fl(f))}</option>`).join("")}</select></label>
       </div>
       <div class="cp-rfields">
-        <label class="field"><span>Type of breach</span><select name="category">${Object.entries(CATS).map(([k, c]) => `<option value="${k}" ${d.category === k ? "selected" : ""}>${esc(c.label)}</option>`).join("")}</select></label>
-        <label class="field"><span>Severity</span><select name="severity">${SEVS.map((s) => `<option value="${s}" ${d.severity === s ? "selected" : ""}>${cap(s)}</option>`).join("")}</select></label>
-        <label class="field br-chk"><input type="checkbox" name="auto_open" ${d.auto_open ? "checked" : ""}><span>Open an incident automatically <small>the clocks start as soon as it fires</small></span></label>
+        <label class="field"><span>Type of breach</span><select name="category" ${dis}>${Object.entries(CATS).map(([k, c]) => `<option value="${k}" ${d.category === k ? "selected" : ""}>${esc(c.label)}</option>`).join("")}</select></label>
+        <label class="field"><span>Severity</span><select name="severity">${SEVS.map((s) => `<option value="${s}" ${d.severity === s ? "selected" : ""} ${lock && !Baseline.sevAllowed(s, lock.severity_min) ? "disabled" : ""}>${cap(s)}</option>`).join("")}</select></label>
+        <label class="field br-chk"><input type="checkbox" name="auto_open" ${d.auto_open ? "checked" : ""} ${lock?.auto_open ? "disabled" : ""}><span>Open an incident automatically <small>the clocks start as soon as it fires</small></span></label>
       </div>
-      <label class="field"><span>Why it matters (shown when reviewing a signal)</span><textarea name="why" rows="2">${esc(d.why || "")}</textarea></label>
+      <label class="field"><span>Why it matters (shown when reviewing a signal)</span><textarea name="why" rows="2" ${dis}>${esc(d.why || "")}</textarea></label>
       <label class="field"><span>First checks, one per line</span><textarea name="steps" rows="3">${esc((d.steps || []).join("\n"))}</textarea></label>
-      <label class="field"><span>Legal reference</span><input type="text" name="ref" value="${esc(d.ref || "")}" maxlength="200"></label>
+      <label class="field"><span>Legal reference</span><input type="text" name="ref" value="${esc(d.ref || "")}" maxlength="200" ${lock ? "readonly" : ""}></label>
       <div class="cp-rfoot"><span class="cp-preview" aria-live="polite"></span>
-        <div class="cp-rbtns">${isNew ? "" : `<button type="button" class="btn ghost danger" data-act="delete-det">Delete detector</button>`}
+        <div class="cp-rbtns">${isNew || lock ? "" : `<button type="button" class="btn ghost danger" data-act="delete-det">Delete detector</button>`}
           <button type="button" class="btn ghost" data-act="cancel-det">Cancel</button><button type="submit" class="btn primary">Apply</button></div></div>
     </form>`;
   }
@@ -874,6 +876,8 @@ Date: ${today} (IST)`;
     const { det: d, isNew } = read;
     if (!d.name) return toast("Give the detector a name.");
     if (d.match.some((m) => !m.value)) return toast("Fill in every condition value, or remove the condition.");
+    const lock = isNew ? null : Baseline.get()?.breach?.detectors?.[d.id];
+    if (lock && d.threshold > lock.threshold_max) return toast(`This detector is part of the DPDP baseline: it can signal at ${lock.threshold_max} or fewer, not more.`);
     S.editDet = null; S.newDet = null;
     edit((p) => { if (isNew) p.detectors.push(d); else p.detectors[p.detectors.findIndex((x) => x.id === d.id)] = d; });
   }
@@ -1029,7 +1033,7 @@ Date: ${today} (IST)`;
     if ((b = t("[data-obl-undo]")) && inc) { if (!window.confirm(`Mark “${OBL[b.dataset.oblUndo].label}” as not done? The change is recorded.`)) return; return patch(inc, { obligations: { [b.dataset.oblUndo]: null } }, "Marked as not done."); }
     if ((b = t("[data-notice-go]"))) { S.notice = b.dataset.noticeGo; render(); return $("brNotices")?.scrollIntoView({ block: "start" }); }
     if ((b = t("[data-notice]"))) { S.notice = b.dataset.notice; return render(); }
-    if ((b = t("[data-toggle-det]"))) { const i = +b.dataset.toggleDet; return edit((d) => (d.detectors[i].enabled = !d.detectors[i].enabled)); }
+    if ((b = t("[data-toggle-det]"))) { const i = +b.dataset.toggleDet; if (Baseline.get()?.breach?.detectors?.[P().detectors[i]?.id]) return; return edit((d) => (d.detectors[i].enabled = !d.detectors[i].enabled)); }
     if ((b = t("[data-edit-det]"))) { S.editDet = b.dataset.editDet; S.newDet = null; S.picking = false; render(); const f = document.querySelector("#brBody .cp-redit"); f?.scrollIntoView({ block: "center" }); return f && preview(f); }
     if ((b = t("[data-new-det]"))) {
       let n = 1; while (P().detectors.some((d) => d.id === `D${n}`)) n++;
@@ -1039,7 +1043,7 @@ Date: ${today} (IST)`;
     }
     if ((b = t("[data-restore]"))) return restore(+b.dataset.restore);
     if ((b = t("[data-model-svc]"))) { S.modelSvc = b.dataset.modelSvc; return render(); }
-    if (t("[data-anom-toggle]")) return edit((d) => (d.anomaly = { ...AN(), enabled: !AN().enabled }));
+    if (t("[data-anom-toggle]")) { if (Baseline.get()?.breach?.anomaly?.enabled) return; return edit((d) => (d.anomaly = { ...AN(), enabled: !AN().enabled })); }
     b = t("[data-act]"); if (!b) return;
     const form = b.closest("form");
     switch (b.dataset.act) {
@@ -1091,7 +1095,7 @@ Date: ${today} (IST)`;
       const k = t.dataset.anom, v = k === "auto_open" ? t.checked : k === "sensitivity" ? t.value : Math.round(Number(t.value)) || ANOM_DEFAULT[k];
       return edit((d) => (d.anomaly = { ...AN(), [k]: k === "min_history" ? Math.min(1000, Math.max(4, v)) : v }));
     }
-    if (t.matches("[data-clock]")) { const n = Math.min(720, Math.max(1, Math.round(Number(t.value)) || 1)); return edit((d) => (d.clocks[t.dataset.clock] = n)); }
+    if (t.matches("[data-clock]")) { const n = Math.min(Number(t.max) || 720, Math.max(1, Math.round(Number(t.value)) || 1)); t.value = n; return edit((d) => (d.clocks[t.dataset.clock] = n)); }
     if (t.matches("[data-contact]")) return edit((d) => { d.contact = { ...(d.contact || {}), [t.dataset.contact]: t.value.trim() }; });
     if (t.matches("[data-org]")) return edit((d) => (d.organisation = t.value.trim()));
     if (t.matches("[data-lookback]")) { const n = Math.min(90, Math.max(1, Math.round(Number(t.value)) || 7)); return edit((d) => (d.lookback_days = n)); }
