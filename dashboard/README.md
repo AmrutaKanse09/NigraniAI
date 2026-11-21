@@ -3,8 +3,9 @@
 <img src="frontend/assets/nigrani-logo.jpg" alt="NigraniAI" width="360">
 
 > **Branding.** The product is **NigraniAI** (*nigrani*, "watchful oversight"). Logo files are in
-> `frontend/assets/`: `nigrani-logo.jpg` (full logo, login page), `nigrani-mark.png` (round mark,
-> sidebar) and `favicon.png`. The log store was earlier called "GuardRail"; its technical names stay
+> `frontend/assets/`: `nigrani-logo.jpg` (full logo, login page), `nigrani-eye-300.png` / `nigrani-eye-900.png`
+> (the full eye mark on a transparent background: sidebar, login brand, phone top bar), `nigrani-mark.png`
+> (round mark, kept for the app icon) and `favicon.png`. The log store was earlier called "GuardRail"; its technical names stay
 > unchanged because they are real identifiers: the Supabase schema `guardrail`, the setting
 > `GUARDRAIL_ANON_KEY`, and `source: "guardrail"` in retention rules.
 
@@ -30,7 +31,7 @@ track every client's usage and billing will be built later.
 > data is minimised before it reaches the browser or the AI. All times are in IST (Asia/Kolkata).
 > DPDP references are aids for review, not legal advice.
 
-_Status as of 18 Oct 2026._
+_Status as of 21 Nov 2026._
 
 ---
 
@@ -54,6 +55,8 @@ _Status as of 18 Oct 2026._
 16. [Project structure](#16-project-structure)
 17. [History](#17-history)
 
+Page guide shortcuts: [DPDP baseline](#511-dpdp-baseline-fixed-legal-rules) · [PII detection](#57b-pii-detection-v2-fused-detection) · [Data map](#57a-data-map)
+
 ---
 
 ## 1. Features at a glance
@@ -62,11 +65,11 @@ _Status as of 18 Oct 2026._
 |---|---|
 | **Dashboard** | Headline numbers from every module, live log-activity charts, "Needs attention", a status per DPDP area |
 | **Log Telemetry** | Live structured log feed across all services, with the personal data each line touches shown inline |
-| **Consent & Purpose** | Checks every processing event for consent and a declared purpose; 8 editable, versioned rules; customer timelines |
+| **Consent & Purpose** | Checks every processing event for consent and a declared purpose; 8 rules fixed by the DPDP baseline (stricter allowed, never weaker) plus the client's own rules, all versioned; customer timelines |
 | **Retention** | Retention schedule measured on live data: past deadline, due soon, legal holds, erasure checklists, inactivity, worklists |
-| **Breach Response** | 7 editable detectors + the ML anomaly model's signals, signal triage, breach register, Rule 7 / CERT-In clocks and notice drafts |
+| **Breach Response** | 7 detectors fixed by the DPDP baseline (can be made more sensitive) + the client's own detectors + the ML anomaly model's signals, signal triage, breach register, Rule 7 / CERT-In clocks (legally capped) and notice drafts |
 | **AI Assistant** | Chat grounded in the dashboard's own numbers (Groq, `openai/gpt-oss-120b`): explains, investigates, gives fixes and prevention |
-| **Data map** | Live map of personal data: which tables hold it, which services use it, for which purposes, who receives it; inventory, record of processing (CSV / PDF) and gap analysis |
+| **Data map** | Live map of personal data: which tables hold it, which services use it, for which purposes, who receives it; inventory and gap analysis |
 | **Readiness score** | 0–100 DPDP readiness score and grade from eight areas, each finding citing the law and giving a fix; open findings ranked by how much each could raise the score, with links to the section that fixes them and ✦ Ask AI on each |
 | **Anomaly detection** | The ML model as its own section: services × time heatmap, a full explanation for every anomaly (what, which measures, how it was detected, likely cause, timeline, sample lines), learning from your reviews, backtest by sensitivity, settings with a test run, ✦ Ask AI |
 | **Evidence & audit** | Its own section: tamper-evident records (hash chain, daily seals), a visual chain timeline, protected-record list, evidence packs for auditors, pack checking (drag and drop), and ✦ Ask AI on the status, any problem or a pack check |
@@ -74,6 +77,8 @@ _Status as of 18 Oct 2026._
 | **Usage & plan** | Usage meters (log lines, AI, lookups, users…), what the plan includes and what's left, per-person caps, alerts |
 | **Billing** | Change plan (pro-rated), monthly GST tax invoices from the meters, pay with Razorpay, billing details, overdue rules |
 | **Account** | Profile, password, sessions, synced settings, activity log, system status |
+| **DPDP baseline** | The legal parts of Consent, Retention, Breach and Anomaly are locked: always on, legal reference fixed, can be tightened but never weakened; enforced by the server on every save ([§5.11](#511-dpdp-baseline-fixed-legal-rules)) |
+| **Live latency** | A pill next to the Live switch shows the round trip to the server every 5 s (green / amber / red / Offline) |
 
 ---
 
@@ -87,28 +92,33 @@ _Status as of 18 Oct 2026._
 
 ### Configure
 
-`.env` in the project root (read by `consent_service/server.py`; never served):
+Copy `.env.example` to `.env` in the project root and fill it in (read by `consent_service/server.py`; never served, never committed). Put comments on their own lines: anything after a value is read as part of it.
 
 ```ini
-CLIENT_NAME=ShopSmart                        # shown in the dashboard, notices, invoices, AI instructions
+# shown in the dashboard, notices, invoices, AI instructions
+CLIENT_NAME=ShopSmart
 CLIENT_ID=shopsmart
 
 # NigraniAI project: dashboard sign-in and ShopSmart's logs
 SUPABASE_URL=https://<guardrail-ref>.supabase.co
-SUPABASE_SERVICE_KEY=<service role key>      # server only: Auth admin API (staff accounts)
-GUARDRAIL_ANON_KEY=<anon key>                # verifies sign-ins; logs are read with the user's JWT
+# server only: Auth admin API (staff accounts)
+SUPABASE_SERVICE_KEY=<service role key>
+# verifies sign-ins; logs are read with the user's JWT
+GUARDRAIL_ANON_KEY=<anon key>
 SUPABASE_DB_SCHEMA=guardrail
 
 # ShopSmart shop database (read-only)
 SHOP_SUPABASE_URL=https://<shop-ref>.supabase.co
 SHOP_SUPABASE_SERVICE_KEY=<service role key>
-SHOP_SUPABASE_ANON_KEY=<public anon key>
 
 CONSENT_PORT=8091
 CONSENT_ALLOWED_ORIGINS=http://localhost:8090
-ROOT_EMAIL=root@example.com                  # the client's root admin (a test account today)
-GROK_API_KEY=gsk_...                         # Groq (or xai-... for xAI)
-RAZORPAY_KEY_ID=rzp_test_...                 # the provider's Razorpay account
+# the client's root admin (a test account today)
+ROOT_EMAIL=root@example.com
+# Groq (or xai-... for xAI)
+GROK_API_KEY=gsk_...
+# the provider's Razorpay account
+RAZORPAY_KEY_ID=rzp_test_...
 RAZORPAY_KEY_SECRET=...
 ```
 
@@ -249,7 +259,7 @@ the browser, `evaluate(policy, schema, data) → findings`, over minimised data;
 | Overview | Customers by status (accepted · existing to re-accept · active without re-accepting · not saved · old version · signed up without accepting); the **sign-up gate** card; one card per open issue with the first fix and the DPDP reference; passing checks |
 | Customers | Paginated table with status chips, an **Account** column (new / existing, sign-up date), issue filter and sorting; search by number, or look up a full email or phone (see below); a customer's consent record and IST timeline (account created, acceptance went live, acceptances, processing) |
 | Issues | Per rule: what happened, why it matters, fix steps, breakdown by purpose, evidence (CSV) |
-| Rules | Each rule as an editable sentence with a switch and live preview; 8 templates; purposes, processing sources, notices, consent fields, data inventory, version history |
+| Rules | Each rule as a sentence with a live preview; the 8 baseline rules (R1–R8) show a lock instead of a switch and can only be made stricter; the client's own rules keep a switch; 8 templates; purposes, processing sources, notices, consent fields, data inventory, version history |
 
 **Policy model:** purposes (legal basis s.6 consent / s.7 legitimate use; notice at sign-up or separate
 opt-in), processing sources (which table counts as processing, customer and time columns, purpose,
@@ -337,7 +347,7 @@ disclosure (s.2(u)), so outages and failed writes are watched too.
 | Breach register | Every incident with status, severity, awareness time, next deadline, one dot per obligation; search; CSV |
 | Incident | Suspected → Confirmed → Contained → Closed (or Not a breach); four obligation cards with countdowns and "Mark as sent"; Board extension; the record; notices; evidence; activity log |
 | Anomaly model ↗ | Opens the **Anomaly detection** section (its own sidebar item, below). ML signals here show their summary, cause and a *Full explanation* link |
-| Detectors & settings | Detectors as sentences with switches; edit conditions, measure, threshold, window, grouping, type, severity, auto-open with a live preview; 6 templates; clock hours; notice contact; look-back; versions |
+| Detectors & settings | Detectors as sentences; the 7 baseline detectors (D1–D7) show a lock, their conditions are fixed and they can only become more sensitive, the client's own detectors keep a switch; edit conditions, measure, threshold, window, grouping, type, severity, auto-open with a live preview; 6 templates; clock hours; notice contact; look-back; versions |
 
 **Response clocks** (start at "Became aware"):
 
@@ -518,8 +528,8 @@ personal data do you hold, where, why, and who gets it?* It is built by the serv
 
 **Live.** With the Live switch on (top right), the page updates every 4 s: the service reads only
 the `database_logs` rows ingested since the last update (`ingested_at` watermark; one request when
-quiet), adds them to per-day buckets so the 30-day window keeps rolling, and recomputes flows, gaps,
-the record of processing and the score in memory (about 1 s). Schema, row counts, the registry and
+quiet), adds them to per-day buckets so the 30-day window keeps rolling, and recomputes flows, gaps
+and the score in memory (about 1 s). Schema, row counts, the registry and
 processors refresh every 5 minutes, or at once when the declarations change. Live updates are not
 written to disk (the evidence ledger only records full scans and declaration changes) and not metered
 beyond API requests; GET `/api/datamap` and the Readiness area return the live result. On the page:
@@ -537,9 +547,6 @@ call runs a full scan.
   category, personal-only, or search. Gap badges sit on the nodes.
 - **Inventory**: a card per table: categories, personal fields, purposes, retention, public access,
   last use, and which services use it (bars).
-- **Record of processing**: one entry per purpose (data principals, personal data stated in the notice vs
-  found, data stores, services, recipients with DPA/country, retention, safeguards), plus a "not
-  covered by a declared purpose" entry. Export CSV or print / save as PDF.
 - **Gaps**: each with severity, the DPDP reference and the fix; "Show on map" jumps to the node.
 - **Declarations** (`datamap:Edit`): a services × purposes matrix (an amber dot marks a purpose whose
   data a service used without being allowed), table purposes beyond the consent policy (policy ones
@@ -603,7 +610,7 @@ Decides, for every column of the customer database, whether it holds personal da
   - a log card: lines checked, unmasked leaks, masked tokens and how many were false alarms;
   - every column, grouped by table: kind, verdict, confidence bar, evidence, and a v1 comparison ("new in v2", "v1 false alarm", "v1 agreed");
   - **✓ / ✕ / "It's actually…" / Reset** (`datamap:Edit`). Answers are kept across scans and audited, and Reset restores the engine's own verdict.
-- **Data map, everywhere else:** inventory, map, record of processing and gaps all use the fused verdicts (confidence and evidence on hover). New gap types:
+- **Data map, everywhere else:** inventory, map and gaps all use the fused verdicts (confidence and evidence on hover). New gap types:
   - *hidden personal data* (the values prove it, the name doesn't);
   - *government ID numbers stored*;
   - *unmasked personal data in stored logs*;
@@ -660,6 +667,31 @@ With only `usage:ViewOwnUsage` a person sees just their own usage.
 | Settings | Theme (Light/Dark/System), start page, live updates; saved to the account |
 | Activity | Day-grouped feed of everything that happened: saves, incidents, signal decisions, lookups (match counts only), AI questions, access changes, denials, usage alerts, billing events; Mine / Everyone (`iam:ReadAllActivity`); CSV |
 | System status | Client, service uptime, NigraniAI and shop connections, AI model, store versions, usage plan, payments mode (`system:ReadStatus`) |
+
+### 5.11 DPDP baseline (fixed legal rules)
+
+NigraniAI is a compliance tool, so the parts of each rule set that come from the law are **fixed**. A
+client configures its own business on top (tables, purposes, notices, contact person, response
+steps, extra rules) and can make any legal check **stricter, never weaker**. The limits live in
+`consent_service/dpdp_baseline.py`; the baseline values are the shipped `default_*.json` documents.
+
+| Section | Locked (always on, legal reference fixed) | The client can |
+|---|---|---|
+| Consent | Rules R1–R8: severity can't go lower; grace before consent at most 600 s, after an erasure request at most 30 days | Raise severity, shorten grace, map rules to its notices and tables, add rules |
+| Retention | E1 erasure after a request (within 30 days); L1–L3 legal minimums (e.g. logs ≥ 1 year, Rule 8(3)); I1 inactivity (≤ 3 years, warning ≥ 48 h before erasure, Rule 8(2)); no delete rule may undercut a legal minimum on the same table | Keep longer, shorten inactivity, point rules at its tables, add rules |
+| Breach | Detectors D1–D7: conditions, window and grouping fixed; threshold only down, severity only up, auto-open stays on. Clocks: CERT-In ≤ 6 h, Board report ≤ 72 h, Board intimation and customer notice ≤ 72 h | Make detectors more sensitive, shorter internal deadlines, contact person, first checks, add detectors |
+| Anomaly model | Always on; sensitivity medium or higher | High sensitivity, time slice, history, auto-open |
+
+**How it is enforced.**
+- Every save of `/api/policy`, `/api/retention-policy` and `/api/breach-policy` is checked; anything
+  weaker is refused with a 400 that names each problem and the law behind it.
+- Restoring an old version applies the baseline instead of refusing, and the version note says so.
+- At start-up, a saved rule set that is weaker than the baseline is corrected as a new version by
+  `system (DPDP baseline)`, with an activity-log entry listing every correction.
+- `GET /api/dpdp-baseline` (any signed-in user) tells the dashboard what is locked; locked items show
+  a lock instead of a switch, fixed fields are read-only and weaker choices are disabled.
+
+When the DPDP Rules change, update `dpdp_baseline.py` and the matching `default_*.json`.
 
 ---
 
@@ -1089,7 +1121,10 @@ frontend/                     static app (no build)
   breach.js                   Breach Response, clocks, notices, anomaly model view
   ai.js                       AI Assistant
   readiness.js                readiness scoring and report
-  datamap.js                  data map: flow map, inventory, record of processing, gaps, declarations
+  datamap.js                  data map: flow map, inventory, gaps, detection, declarations
+  anomaly.js                  Anomaly detection section (heatmap, explanations, backtest, settings)
+  evidence.js                 Evidence & audit (hash chain, daily seals, evidence packs)
+  assets/                     logo, eye mark, favicon
   usage.js                    Usage & plan
   billing.js                  Billing tab, Razorpay Checkout, printable tax invoice
   iam.js                      Access management
@@ -1102,8 +1137,15 @@ consent_service/
   default_policy.json         starting consent policy (ShopSmart Customer Data Inventory)
   default_retention.json      starting retention schedule
   default_breach.json         starting detectors, clocks and anomaly settings
+  default_datamap.json        starting data map declarations
+  dpdp_baseline.py            the DPDP baseline: which rules are fixed by law and the limits on them (§5.11)
+  pii_engine.py               PII detection v2: validators, checksums, fused verdicts (§5.7b)
+  pii_ner_worker.py           optional local language model for names and places (runs in .pii-venv)
+  test_pii_engine.py          unit tests for the PII engine
   data/                       created on first run (see §11)
-.env                          server-side keys and settings (never served)
+.env                          server-side keys and settings (never served, never committed)
+.env.example                  every setting with a placeholder: copy it to .env
+docs/                         design notes
 ```
 
 ---
@@ -1114,7 +1156,10 @@ consent_service/
 |---|---|
 | 15 Oct 2026 | Log Telemetry, Consent & Purpose; the old two-project pipeline (`sync_bridge.py`, `pii_worker.py`, `pii_engine.py` with Presidio/spaCy) removed |
 | 16–17 Oct 2026 | Retention, Breach Response, Dashboard charts, AI Assistant, Accounts, IAM, ML anomaly model (made live) |
-| 18 Oct 2026 | Usage meters, plans, billing with GST and Razorpay; readiness score. A multi-company version (workspaces, public sign-up, setup wizard) was built and then removed: each client gets their own copy. Backup of that version: `~/Downloads/complaince_dashboard-backup-multicompany-2026-10-18/` |
+| 18 Oct 2026 | Usage meters, plans, billing with GST and Razorpay; readiness score. A multi-company version (workspaces, public sign-up, setup wizard) was built and then removed: each client gets their own copy. |
+| 19–20 Oct 2026 | Rebrand to NigraniAI; hosted deployment; Data map, PII detection v2, Evidence & audit and Anomaly detection as their own sections; public exposure test removed |
+| 24 Oct 2026 | Live latency pill; full eye logo |
+| 21 Nov 2026 | DPDP baseline: legal rules locked (stricter allowed, weaker blocked, server-enforced); Record of processing tab removed from the Data map |
 
 Live snapshot (ShopSmart, 17–18 Oct 2026): 28,702 log lines from 9 services; 2 of 8 customers with
 valid consent and 6 open consent issues; 16 detector signals and 8 anomalies over 7 days; nothing past
